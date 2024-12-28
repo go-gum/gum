@@ -1,4 +1,4 @@
-module github.com/agum/agum
+module github.com/go-gum/gum
 
 go 1.23.3
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/agum/agum/response"
+	"github.com/go-gum/gum/response"
 	"io"
 	"log/slog"
 	"net/http"
