@@ -114,6 +114,22 @@ func (o Option[T]) Get() (T, bool) {
 	return o.Value, o.IsSet
 }
 
+// GetOr returns the value in this Option if it exists and falls back
+// to the provided fallback value otherwise
+func (o Option[T]) GetOr(fallbackValue T) T {
+	if o.IsSet {
+		return o.Value
+	} else {
+		return fallbackValue
+	}
+}
+
+// GetOrZero calls GetOr with a zero T value
+func (o Option[T]) GetOrZero() T {
+	var zero T
+	return o.GetOr(zero)
+}
+
 func (Option[T]) FromRequest(r *http.Request) (Option[T], error) {
 	try, err := gum.Extract[Try[T]](r)
 	if err != nil {

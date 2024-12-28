@@ -37,6 +37,8 @@ type Query struct {
 	url.Values
 }
 
+type MultipartFormMaxMemory int64
+
 func init() {
 	gum.Register(func(r *http.Request) (*http.Request, error) {
 		return r, nil
@@ -91,8 +93,15 @@ func init() {
 	})
 
 	gum.Register(func(r *http.Request) (*multipart.Form, error) {
-		// TODO get maxMemory from request
-		if err := r.ParseMultipartForm(1024 * 1024); err != nil {
+		var maxMemory int64 = 1024 * 1024
+
+		// try to get the max memory from the context
+		memoryValue, _ := gum.Extract[Option[ContextValue[MultipartFormMaxMemory]]](r)
+		if value, ok := memoryValue.Get(); ok {
+			maxMemory = int64(value.Value)
+		}
+
+		if err := r.ParseMultipartForm(maxMemory); err != nil {
 			return nil, fmt.Errorf("parse multipart form: %w", err)
 		}
 
