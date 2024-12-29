@@ -176,7 +176,9 @@ func Handler(f any) http.Handler {
 // it will also create an instance of the type ty points to, recursively.
 func newValue(ty reflect.Type) reflect.Value {
 	if ty.Kind() == reflect.Pointer {
-		return reflect.Indirect(newValue(ty.Elem()))
+		ptr := reflect.New(ty).Elem()
+		ptr.Set(newValue(ty.Elem()).Addr())
+		return ptr
 	}
 
 	return reflect.New(ty).Elem()

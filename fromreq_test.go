@@ -1,8 +1,7 @@
-package extractors
+package gum
 
 import (
 	"bytes"
-	"github.com/go-gum/gum"
 	"io"
 	"net/http"
 	"testing"
@@ -17,18 +16,18 @@ func TestTry_FromRequest(t *testing.T) {
 		}
 
 		var extractedValue Try[ContentType]
-		gum.Handler(func(v Try[ContentType]) { extractedValue = v }).ServeHTTP(nil, req)
-		equal(t, extractedValue.Value, "application/json")
-		equal(t, extractedValue.Error, nil)
+		Handler(func(v Try[ContentType]) { extractedValue = v }).ServeHTTP(nil, req)
+		AssertEqual(t, extractedValue.Value, "application/json")
+		AssertEqual(t, extractedValue.Error, nil)
 	})
 
 	t.Run("No Value", func(t *testing.T) {
 		req := &http.Request{}
 
 		var extractedValue Try[ContentType]
-		gum.Handler(func(v Try[ContentType]) { extractedValue = v }).ServeHTTP(nil, req)
-		equal(t, extractedValue.Value, "")
-		notEqual(t, extractedValue.Error, nil)
+		Handler(func(v Try[ContentType]) { extractedValue = v }).ServeHTTP(nil, req)
+		AssertEqual(t, extractedValue.Value, "")
+		AssertNotEqual(t, extractedValue.Error, nil)
 	})
 
 }
@@ -38,18 +37,18 @@ func TestOption_FromRequest(t *testing.T) {
 		req := &http.Request{ContentLength: 1024}
 
 		var extractedValue Try[ContentLength]
-		gum.Handler(func(v Try[ContentLength]) { extractedValue = v }).ServeHTTP(nil, req)
-		equal(t, extractedValue.Value, 1024)
-		equal(t, extractedValue.Error, nil)
+		Handler(func(v Try[ContentLength]) { extractedValue = v }).ServeHTTP(nil, req)
+		AssertEqual(t, extractedValue.Value, 1024)
+		AssertEqual(t, extractedValue.Error, nil)
 	})
 
 	t.Run("No Value", func(t *testing.T) {
 		req := &http.Request{ContentLength: -1}
 
 		var extractedValue Try[ContentLength]
-		gum.Handler(func(v Try[ContentLength]) { extractedValue = v }).ServeHTTP(nil, req)
-		equal(t, extractedValue.Value, 0)
-		notEqual(t, extractedValue.Error, nil)
+		Handler(func(v Try[ContentLength]) { extractedValue = v }).ServeHTTP(nil, req)
+		AssertEqual(t, extractedValue.Value, 0)
+		AssertNotEqual(t, extractedValue.Error, nil)
 	})
 
 }
@@ -61,8 +60,8 @@ func TestJSON(t *testing.T) {
 	type BodyStruct struct{ Foo string }
 
 	var extractedValue BodyStruct
-	gum.Handler(func(v JSON[BodyStruct]) { extractedValue = v.Value }).ServeHTTP(nil, req)
-	equal(t, extractedValue, BodyStruct{Foo: "bar"})
+	Handler(func(v JSON[BodyStruct]) { extractedValue = v.Value }).ServeHTTP(nil, req)
+	AssertEqual(t, extractedValue, BodyStruct{Foo: "bar"})
 }
 
 func TestJSONParseError(t *testing.T) {
@@ -72,8 +71,8 @@ func TestJSONParseError(t *testing.T) {
 	type BodyStruct struct{ Foo string }
 
 	var rw responseWriter
-	gum.Handler(func(v JSON[BodyStruct]) { t.FailNow() }).ServeHTTP(&rw, req)
-	equal(t, rw.statusCode, http.StatusBadRequest)
+	Handler(func(v JSON[BodyStruct]) { t.FailNow() }).ServeHTTP(&rw, req)
+	AssertEqual(t, rw.statusCode, http.StatusBadRequest)
 }
 
 func TestContentValue(t *testing.T) {
@@ -84,7 +83,7 @@ func TestContentValue(t *testing.T) {
 	provideValue := ProvideContextValue(MyValue("foo bar"))
 
 	var extractedValue MyValue
-	handler := gum.Handler(func(v ContextValue[MyValue]) { extractedValue = v.Value })
+	handler := Handler(func(v ContextValue[MyValue]) { extractedValue = v.Value })
 	provideValue(handler).ServeHTTP(nil, req)
-	equal(t, extractedValue, MyValue("foo bar"))
+	AssertEqual(t, extractedValue, MyValue("foo bar"))
 }

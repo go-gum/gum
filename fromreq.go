@@ -1,10 +1,9 @@
-package extractors
+package gum
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/go-gum/gum"
 	"log/slog"
 	"net/http"
 	"reflect"
@@ -19,7 +18,7 @@ type ContextValue[T any] struct {
 	Value T
 }
 
-var _ = gum.AssertFromRequest[ContextValue[any]]()
+var _ = AssertFromRequest[ContextValue[any]]()
 
 func (ContextValue[T]) FromRequest(r *http.Request) (ContextValue[T], error) {
 	key := reflect.TypeFor[T]()
@@ -51,7 +50,7 @@ func ProvideContextValue[T any](value T) Middleware {
 
 // ContextValueExtractor returns a gum.Extractor that extracts a value of type T
 // from the context.Context that was previous provided using ProvideContextValue.
-func ContextValueExtractor[T any]() gum.Extractor[T] {
+func ContextValueExtractor[T any]() Extractor[T] {
 	return func(r *http.Request) (T, error) {
 		val, err := ContextValue[T]{}.FromRequest(r)
 		return val.Value, err
@@ -63,7 +62,7 @@ type JSON[T any] struct {
 	Value T
 }
 
-var _ = gum.AssertFromRequest[JSON[any]]()
+var _ = AssertFromRequest[JSON[any]]()
 
 func (JSON[T]) FromRequest(r *http.Request) (JSON[T], error) {
 	var value T
@@ -82,7 +81,7 @@ type Try[T any] struct {
 	Error error
 }
 
-var _ = gum.AssertFromRequest[Try[any]]()
+var _ = AssertFromRequest[Try[any]]()
 
 // Get gets the Try value and its error
 func (o Try[T]) Get() (T, error) {
@@ -90,7 +89,7 @@ func (o Try[T]) Get() (T, error) {
 }
 
 func (Try[T]) FromRequest(r *http.Request) (Try[T], error) {
-	tValue, err := gum.Extract[T](r)
+	tValue, err := Extract[T](r)
 	if err != nil {
 		result := Try[T]{Error: err}
 		return result, nil
@@ -106,7 +105,7 @@ type Option[T any] struct {
 	IsSet bool
 }
 
-var _ = gum.AssertFromRequest[Option[any]]()
+var _ = AssertFromRequest[Option[any]]()
 
 // Get gets the Option value and a boolean flag to test if
 // the value is set.
@@ -131,7 +130,7 @@ func (o Option[T]) GetOrZero() T {
 }
 
 func (Option[T]) FromRequest(r *http.Request) (Option[T], error) {
-	try, err := gum.Extract[Try[T]](r)
+	try, err := Extract[Try[T]](r)
 	if err != nil {
 		// Extracting a Try must never fail
 		panic(err)
@@ -155,7 +154,7 @@ type Logger struct {
 	*slog.Logger
 }
 
-var _ = gum.AssertFromRequest[Logger]()
+var _ = AssertFromRequest[Logger]()
 
 func (l Logger) FromRequest(r *http.Request) (Logger, error) {
 	ctx := r.Context()

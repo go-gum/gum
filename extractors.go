@@ -1,34 +1,38 @@
-package extractors
+package gum
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/go-gum/gum"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
 )
 
-// Host is the value of the Host header
+// Host is the value of the [http.Request.Host] field
 type Host string
 
-// Method is the value of the requests Method field, e.g. GET, POST, etc
+// Method is the value of the [http.Request.Method] field, e.g. GET, POST, etc
 type Method string
 
-// ContentLength is the value of the Content-Length header. Only available
-// if the value requests value is not negative.
+// ContentLength is the value of the [http.Request.ContentLength] field.
+// Only available if the value requests value is not negative.
 type ContentLength int64
 
 // ContentType holds the value of the requests Content-Type header.
 type ContentType string
 
-// RawBody is a byte slice holding the requests body.
+// RawBody is a byte slice holding the content of the requests [http.Request.Body] field.
 type RawBody []byte
 
-// Form contains the requests parsed form as url.Values
+// Form contains the requests [http.Request.Form] as url.Values
 type Form struct {
+	url.Values
+}
+
+// PostForm contains the requests parsed [http.Request.PostForm] as url.Values
+type PostForm struct {
 	url.Values
 }
 
@@ -40,43 +44,43 @@ type Query struct {
 type MultipartFormMaxMemory int64
 
 func init() {
-	gum.Register(func(r *http.Request) (*http.Request, error) {
+	Register(func(r *http.Request) (*http.Request, error) {
 		return r, nil
 	})
 
-	gum.Register(func(r *http.Request) (http.Header, error) {
+	Register(func(r *http.Request) (http.Header, error) {
 		return r.Header, nil
 	})
 
-	gum.Register(func(r *http.Request) (io.Reader, error) {
+	Register(func(r *http.Request) (io.Reader, error) {
 		return r.Body, nil
 	})
 
-	gum.Register(func(r *http.Request) (io.ReadCloser, error) {
+	Register(func(r *http.Request) (io.ReadCloser, error) {
 		return r.Body, nil
 	})
 
-	gum.Register(func(r *http.Request) (context.Context, error) {
+	Register(func(r *http.Request) (context.Context, error) {
 		return r.Context(), nil
 	})
 
-	gum.Register(func(r *http.Request) (*url.URL, error) {
+	Register(func(r *http.Request) (*url.URL, error) {
 		return r.URL, nil
 	})
 
-	gum.Register(func(r *http.Request) (Query, error) {
+	Register(func(r *http.Request) (Query, error) {
 		return Query{r.URL.Query()}, nil
 	})
 
-	gum.Register(func(r *http.Request) (Method, error) {
+	Register(func(r *http.Request) (Method, error) {
 		return Method(r.Method), nil
 	})
 
-	gum.Register(func(r *http.Request) (Host, error) {
+	Register(func(r *http.Request) (Host, error) {
 		return Host(r.Host), nil
 	})
 
-	gum.Register(func(r *http.Request) (ContentLength, error) {
+	Register(func(r *http.Request) (ContentLength, error) {
 		if r.ContentLength == -1 {
 			return 0, errors.New("ContentLength is unknown")
 		}
@@ -84,7 +88,7 @@ func init() {
 		return ContentLength(r.ContentLength), nil
 	})
 
-	gum.Register(func(r *http.Request) (Form, error) {
+	Register(func(r *http.Request) (Form, error) {
 		if err := r.ParseForm(); err != nil {
 			return Form{}, fmt.Errorf("parse form: %w", err)
 		}
@@ -92,11 +96,19 @@ func init() {
 		return Form{r.Form}, nil
 	})
 
-	gum.Register(func(r *http.Request) (*multipart.Form, error) {
+	Register(func(r *http.Request) (PostForm, error) {
+		if err := r.ParseForm(); err != nil {
+			return PostForm{}, fmt.Errorf("parse form: %w", err)
+		}
+
+		return PostForm{r.PostForm}, nil
+	})
+
+	Register(func(r *http.Request) (*multipart.Form, error) {
 		var maxMemory int64 = 1024 * 1024
 
 		// try to get the max memory from the context
-		memoryValue, _ := gum.Extract[Option[ContextValue[MultipartFormMaxMemory]]](r)
+		memoryValue, _ := Extract[Option[ContextValue[MultipartFormMaxMemory]]](r)
 		if value, ok := memoryValue.Get(); ok {
 			maxMemory = int64(value.Value)
 		}
@@ -108,7 +120,7 @@ func init() {
 		return r.MultipartForm, nil
 	})
 
-	gum.Register(func(r *http.Request) (RawBody, error) {
+	Register(func(r *http.Request) (RawBody, error) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			return nil, fmt.Errorf("reading body: %w", err)
@@ -117,7 +129,7 @@ func init() {
 		return body, nil
 	})
 
-	gum.Register(func(r *http.Request) (ContentType, error) {
+	Register(func(r *http.Request) (ContentType, error) {
 		contentType := r.Header.Get("Content-Type")
 		if contentType == "" {
 			return "", fmt.Errorf("no Content-Type header in request")
