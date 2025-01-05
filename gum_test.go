@@ -2,6 +2,7 @@ package gum
 
 import (
 	"errors"
+	. "github.com/go-gum/gum/internal/test"
 	"reflect"
 	"testing"
 )
