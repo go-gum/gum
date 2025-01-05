@@ -2,6 +2,7 @@ package gum
 
 import (
 	"bytes"
+	. "github.com/go-gum/gum/internal/test"
 	"io"
 	"net/http"
 	"testing"

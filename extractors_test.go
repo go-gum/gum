@@ -2,6 +2,7 @@ package gum
 
 import (
 	"bytes"
+	. "github.com/go-gum/gum/internal/test"
 	"net/http"
 	"testing"
 )
@@ -54,22 +55,4 @@ func (r *responseWriter) Write(bytes []byte) (int, error) {
 
 func (r *responseWriter) WriteHeader(statusCode int) {
 	r.statusCode = statusCode
-}
-
-func AssertEqual[T comparable](t *testing.T, actual, expected T) {
-	if actual != expected {
-		t.Fatalf("expected %#v to equal %#v", actual, expected)
-	}
-}
-
-func AssertNotEqual[T comparable](t *testing.T, actual, expected T) {
-	if actual == expected {
-		t.Fatalf("expected %#v to not equal %#v", actual, expected)
-	}
-}
-
-func AssertTrue(t *testing.T, actual bool) {
-	if !actual {
-		t.Fatal("expected value to be true")
-	}
 }
