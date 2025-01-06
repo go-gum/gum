@@ -594,7 +594,61 @@ func fieldsIter(ty reflect.Type) iter.Seq[reflect.StructField] {
 	}
 }
 
+func handleNumberErr[T any](inputValue string, value T, err error) (T, error) {
+	var zeroValue T
+	if errors.Is(err, strconv.ErrSyntax) {
+		err := fmt.Errorf("parse number %q: %w", inputValue, err)
+		return zeroValue, errors.Join(err, ErrInvalidType)
+	}
+
+	if err != nil {
+		return zeroValue, err
+	}
+
+	return value, nil
+}
+
 type StringValue string
+
+func (s StringValue) Int8() (int8, error) {
+	intValue, err := strconv.ParseInt(string(s), 10, 8)
+	return handleNumberErr(string(s), int8(intValue), err)
+}
+
+func (s StringValue) Int16() (int16, error) {
+	intValue, err := strconv.ParseInt(string(s), 10, 16)
+	return handleNumberErr(string(s), int16(intValue), err)
+}
+
+func (s StringValue) Int32() (int32, error) {
+	intValue, err := strconv.ParseInt(string(s), 10, 32)
+	return handleNumberErr(string(s), int32(intValue), err)
+}
+
+func (s StringValue) Int64() (int64, error) {
+	intValue, err := strconv.ParseInt(string(s), 10, 64)
+	return handleNumberErr(string(s), intValue, err)
+}
+
+func (s StringValue) Uint8() (uint8, error) {
+	intValue, err := strconv.ParseUint(string(s), 10, 8)
+	return handleNumberErr(string(s), uint8(intValue), err)
+}
+
+func (s StringValue) Uint16() (uint16, error) {
+	intValue, err := strconv.ParseUint(string(s), 10, 16)
+	return handleNumberErr(string(s), uint16(intValue), err)
+}
+
+func (s StringValue) Uint32() (uint32, error) {
+	intValue, err := strconv.ParseUint(string(s), 10, 32)
+	return handleNumberErr(string(s), uint32(intValue), err)
+}
+
+func (s StringValue) Uint64() (uint64, error) {
+	intValue, err := strconv.ParseUint(string(s), 10, 64)
+	return handleNumberErr(string(s), intValue, err)
+}
 
 func (s StringValue) Bool() (bool, error) {
 	switch {
@@ -629,14 +683,6 @@ func (s StringValue) String() (string, error) {
 	return string(s), nil
 }
 
-func (s StringValue) Get(key string) (SourceValue, error) {
-	return nil, ErrInvalidType
-}
-
-func (s StringValue) Iter() (iter.Seq[SourceValue], error) {
-	return nil, ErrInvalidType
-}
-
 type InvalidValue struct{}
 
 func (i InvalidValue) Bool() (bool, error) {
@@ -655,10 +701,6 @@ func (i InvalidValue) String() (string, error) {
 	return "", ErrInvalidType
 }
 
-func (i InvalidValue) Get(key string) (SourceValue, error) {
-	return nil, ErrInvalidType
-}
+var _ SourceValue = InvalidValue{}
 
-func (i InvalidValue) Iter() (iter.Seq[SourceValue], error) {
-	return nil, ErrInvalidType
-}
+var _ IntSourceValue = StringValue("")
