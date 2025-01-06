@@ -41,16 +41,47 @@ type SourceValue interface {
 	// String returns the current value as a string.
 	// Returns error ErrInvalidType if the value can not be represented as such.
 	String() (string, error)
+}
+
+type ContainerSourceValue interface {
+	SourceValue
 
 	// Get returns a child value of this SourceValue if it exists.
 	// Returns error ErrInvalidType if the current SourceValue does not have any
 	// child values. If the SourceValue does have children, but just not the
 	// requested child, ErrNoValue must be returned.
 	Get(key string) (SourceValue, error)
+}
+
+type SliceSourceValue interface {
+	SourceValue
 
 	// Iter interprets the SourceValue as a slice and iterates over the
 	// elements within. Returns ErrInvalidType if the SourceValue is not iterable
 	Iter() (iter.Seq[SourceValue], error)
+}
+
+type MapSourceValue interface {
+	SourceValue
+
+	// KeyValues interprets the SourceValue as a map and iterates over the
+	// elements within.
+	// Returns ErrInvalidType if the SourceValue is not iterable
+	KeyValues() (iter.Seq2[SourceValue, SourceValue], error)
+}
+
+type IntSourceValue interface {
+	SourceValue
+
+	Int8() (int8, error)
+	Int16() (int16, error)
+	Int32() (int32, error)
+	Int64() (int64, error)
+
+	Uint8() (uint8, error)
+	Uint16() (uint16, error)
+	Uint32() (uint32, error)
+	Uint64() (uint64, error)
 }
 
 func Unmarshal(source SourceValue, target any) error {
@@ -120,6 +151,9 @@ func makeSetterOf(inConstruction inConstructionTypes, ty reflect.Type) (setter, 
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return setInt, nil
 
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return setUint, nil
+
 	case reflect.Float32, reflect.Float64:
 		return setFloat, nil
 
@@ -137,6 +171,9 @@ func makeSetterOf(inConstruction inConstructionTypes, ty reflect.Type) (setter, 
 
 	case reflect.Array:
 		return makeSetArray(inConstruction, ty)
+
+	case reflect.Map:
+		return makeSetMap(inConstruction, ty)
 
 	default:
 		return nil, NotSupportedError{Type: ty}
@@ -178,12 +215,104 @@ func setBool(source SourceValue, target reflect.Value) error {
 }
 
 func setInt(source SourceValue, target reflect.Value) error {
+	if intSource, ok := source.(IntSourceValue); ok {
+		switch target.Kind() {
+		case reflect.Int8:
+			intValue, err := intSource.Int8()
+			if err != nil {
+				return fmt.Errorf("get int8 value: %w", err)
+			}
+
+			target.SetInt(int64(intValue))
+
+		case reflect.Int16:
+			intValue, err := intSource.Int16()
+			if err != nil {
+				return fmt.Errorf("get int16 value: %w", err)
+			}
+
+			target.SetInt(int64(intValue))
+
+		case reflect.Int32:
+			intValue, err := intSource.Int32()
+			if err != nil {
+				return fmt.Errorf("get int32 value: %w", err)
+			}
+
+			target.SetInt(int64(intValue))
+
+		case reflect.Int64:
+			intValue, err := intSource.Int64()
+			if err != nil {
+				return fmt.Errorf("get int64 value: %w", err)
+			}
+
+			target.SetInt(intValue)
+
+		default:
+			// nothing, continue with SourceValue.Int
+		}
+	}
+
 	intValue, err := source.Int()
 	if err != nil {
 		return fmt.Errorf("get int value: %w", err)
 	}
 
 	target.SetInt(intValue)
+	return nil
+}
+
+func setUint(source SourceValue, target reflect.Value) error {
+	if intSource, ok := source.(IntSourceValue); ok {
+		switch target.Kind() {
+		case reflect.Uint8:
+			intValue, err := intSource.Uint8()
+			if err != nil {
+				return fmt.Errorf("get int8 value: %w", err)
+			}
+
+			target.SetUint(uint64(intValue))
+
+		case reflect.Uint16:
+			intValue, err := intSource.Uint16()
+			if err != nil {
+				return fmt.Errorf("get int16 value: %w", err)
+			}
+
+			target.SetUint(uint64(intValue))
+
+		case reflect.Uint32:
+			intValue, err := intSource.Uint32()
+			if err != nil {
+				return fmt.Errorf("get int32 value: %w", err)
+			}
+
+			target.SetUint(uint64(intValue))
+
+		case reflect.Uint64:
+			intValue, err := intSource.Uint64()
+			if err != nil {
+				return fmt.Errorf("get int64 value: %w", err)
+			}
+
+			target.SetUint(intValue)
+
+		default:
+			// nothing, continue with SourceValue.Uint
+		}
+	}
+
+	intValue, err := source.Int()
+	if err != nil {
+		return fmt.Errorf("get int value: %w", err)
+	}
+
+	if intValue < 0 {
+		return fmt.Errorf("invalid uint value %d", intValue)
+	}
+
+	target.SetUint(uint64(intValue))
 	return nil
 }
 
@@ -233,8 +362,13 @@ func makeSetStruct(inConstruction inConstructionTypes, ty reflect.Type) (setter,
 	}
 
 	setter := func(source SourceValue, target reflect.Value) error {
+		containerSource, ok := source.(ContainerSourceValue)
+		if !ok {
+			return ErrInvalidType
+		}
+
 		for idx, field := range fields {
-			fieldSource, err := source.Get(field.Name)
+			fieldSource, err := containerSource.Get(field.Name)
 			switch {
 			case errors.Is(err, ErrNoValue):
 				continue
@@ -254,6 +388,55 @@ func makeSetStruct(inConstruction inConstructionTypes, ty reflect.Type) (setter,
 	return setter, nil
 }
 
+func makeSetMap(inConstruction inConstructionTypes, ty reflect.Type) (setter, error) {
+	keySetter, err := setterOf(inConstruction, ty.Key())
+	if err != nil {
+		return nil, fmt.Errorf("setter for key type %q: %w", ty, err)
+	}
+
+	valueSetter, err := setterOf(inConstruction, ty.Elem())
+	if err != nil {
+		return nil, fmt.Errorf("setter for value type %q: %w", ty, err)
+	}
+
+	keyType := ty.Key()
+	valueType := ty.Elem()
+
+	setter := func(source SourceValue, target reflect.Value) error {
+		mapSource, ok := source.(MapSourceValue)
+		if !ok {
+			return ErrInvalidType
+		}
+
+		keyValues, err := mapSource.KeyValues()
+		if err != nil {
+			return fmt.Errorf("iterate key/value pairs: %w", err)
+		}
+
+		mapTarget := reflect.MakeMap(ty)
+
+		for keySource, valueSource := range keyValues {
+			keyTarget := reflect.New(keyType).Elem()
+			if err := keySetter(keySource, keyTarget); err != nil {
+				return fmt.Errorf("set key: %w", err)
+			}
+
+			valueTarget := reflect.New(valueType).Elem()
+			if err := valueSetter(valueSource, valueTarget); err != nil {
+				return fmt.Errorf("set key: %w", err)
+			}
+
+			mapTarget.SetMapIndex(keyTarget, valueTarget)
+		}
+
+		target.Set(mapTarget)
+
+		return nil
+	}
+
+	return setter, nil
+}
+
 func makeSetSlice(inConstruction inConstructionTypes, ty reflect.Type) (setter, error) {
 	elementSetter, err := setterOf(inConstruction, ty.Elem())
 	if err != nil {
@@ -264,7 +447,12 @@ func makeSetSlice(inConstruction inConstructionTypes, ty reflect.Type) (setter, 
 	placeholderValue := reflect.New(ty.Elem()).Elem()
 
 	setter := func(source SourceValue, target reflect.Value) error {
-		sourceIter, err := source.Iter()
+		sliceSource, ok := source.(SliceSourceValue)
+		if !ok {
+			return ErrInvalidType
+		}
+
+		sourceIter, err := sliceSource.Iter()
 		if err != nil {
 			return fmt.Errorf("as iter: %w", err)
 		}
@@ -296,7 +484,12 @@ func makeSetArray(inConstruction inConstructionTypes, ty reflect.Type) (setter, 
 	elementCount := ty.Len()
 
 	setter := func(source SourceValue, target reflect.Value) error {
-		sourceIter, err := source.Iter()
+		sliceSource, ok := source.(SliceSourceValue)
+		if !ok {
+			return ErrInvalidType
+		}
+
+		sourceIter, err := sliceSource.Iter()
 		if err != nil {
 			return fmt.Errorf("as iter: %w", err)
 		}
