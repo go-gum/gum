@@ -224,6 +224,7 @@ func setInt(source SourceValue, target reflect.Value) error {
 			}
 
 			target.SetInt(int64(intValue))
+			return nil
 
 		case reflect.Int16:
 			intValue, err := intSource.Int16()
@@ -232,6 +233,7 @@ func setInt(source SourceValue, target reflect.Value) error {
 			}
 
 			target.SetInt(int64(intValue))
+			return nil
 
 		case reflect.Int32:
 			intValue, err := intSource.Int32()
@@ -240,6 +242,7 @@ func setInt(source SourceValue, target reflect.Value) error {
 			}
 
 			target.SetInt(int64(intValue))
+			return nil
 
 		case reflect.Int64:
 			intValue, err := intSource.Int64()
@@ -248,6 +251,7 @@ func setInt(source SourceValue, target reflect.Value) error {
 			}
 
 			target.SetInt(intValue)
+			return nil
 
 		default:
 			// nothing, continue with SourceValue.Int
@@ -273,6 +277,7 @@ func setUint(source SourceValue, target reflect.Value) error {
 			}
 
 			target.SetUint(uint64(intValue))
+			return nil
 
 		case reflect.Uint16:
 			intValue, err := intSource.Uint16()
@@ -281,6 +286,7 @@ func setUint(source SourceValue, target reflect.Value) error {
 			}
 
 			target.SetUint(uint64(intValue))
+			return nil
 
 		case reflect.Uint32:
 			intValue, err := intSource.Uint32()
@@ -289,6 +295,7 @@ func setUint(source SourceValue, target reflect.Value) error {
 			}
 
 			target.SetUint(uint64(intValue))
+			return nil
 
 		case reflect.Uint64:
 			intValue, err := intSource.Uint64()
@@ -297,6 +304,7 @@ func setUint(source SourceValue, target reflect.Value) error {
 			}
 
 			target.SetUint(intValue)
+			return nil
 
 		default:
 			// nothing, continue with SourceValue.Uint
