@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"log/slog"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -358,7 +360,7 @@ func setTextUnmarshaler(source SourceValue, target reflect.Value) error {
 func makeSetStruct(inConstruction inConstructionTypes, ty reflect.Type) (setter, error) {
 	var setters []setter
 
-	fields := collectStructFields(ty)
+	fields := slices.Collect(fieldsToSerialize(ty))
 
 	for _, field := range fields {
 		de, err := setterOf(inConstruction, field.Type)
@@ -529,75 +531,165 @@ type field struct {
 	Index []int
 }
 
-func collectStructFields(ty reflect.Type) []field {
-	var fields []field
-
-	// collect all fields
-	for fi := range fieldsIter(ty) {
-		name := nameOf(fi)
-
-		if name == "" {
-			// skip this field
-			continue
-		}
-
-		fields = append(fields, field{
-			Name:  name,
-			Type:  fi.Type,
-			Index: fi.Index,
-		})
-	}
-
-	return fields
-}
-
-func nameOf(fi reflect.StructField) string {
-	// the name of the field
-	name := fi.Name
-
+func nameOf(fi reflect.StructField) (name string, explicit bool) {
 	// parse json struct tag to get renamed alias
-	if tag := fi.Tag.Get("json"); tag != "" {
-		if tag == "-" {
-			// empty name, skip this field
-			return ""
-		}
+	tag := fi.Tag.Get("json")
 
-		idx := strings.IndexByte(tag, ',')
-		switch {
-		case idx == -1:
-			// no comma, take the full tag as name
-			name = tag
-
-		case idx > 0:
-			// non emtpy alias, take up to comma
-			name = tag[:idx]
-		}
+	if tag == "" {
+		// tag is empty, take the original name
+		return fi.Name, false
 	}
 
-	return name
+	if tag == "-" {
+		// return empty name indicate: skip this field
+		return "", true
+	}
+
+	idx := strings.IndexByte(tag, ',')
+	switch {
+	case idx == -1:
+		// no comma, take the full tag as explicit name
+		return tag, true
+
+	case idx > 0:
+		// non emtpy alias, take up to comma
+		return tag[:idx], true
+
+	default:
+		// no alias before the comma, keep field name
+		return fi.Name, false
+	}
 }
 
-func fieldsIter(ty reflect.Type) iter.Seq[reflect.StructField] {
+func fieldsToSerialize(ty reflect.Type) iter.Seq[field] {
 	if ty.Kind() != reflect.Struct {
 		panic("not a struct")
 	}
 
-	return func(yield func(reflect.StructField) bool) {
-		for idx := range ty.NumField() {
-			fi := ty.Field(idx)
-			if !fi.IsExported() {
-				// skip not exported field
+	type Queued struct {
+		Type        reflect.Type
+		ParentIndex []int
+	}
+
+	type Candidate struct {
+		Name     string
+		Explicit bool
+		Field    field
+	}
+
+	return func(yield func(field) bool) {
+		// initialize queue to walk
+		queue := []Queued{{Type: ty}}
+
+		candidates := map[string][]Candidate{}
+
+		var order []string
+
+		for len(queue) > 0 {
+			item := queue[0]
+			queue = queue[1:]
+
+			for idx := range item.Type.NumField() {
+				fi := item.Type.Field(idx)
+				if !fi.IsExported() {
+					continue
+				}
+
+				name, explicit := nameOf(fi)
+				if name == "" {
+					// this one is skipped
+					continue
+				}
+
+				// derive index of this one. ensure we allocate a new slice by setting cap to
+				// the length of the parents index
+				parent := item.ParentIndex
+				index := append(parent[:len(parent):len(parent)], fi.Index...)
+
+				if fi.Anonymous && !explicit {
+					// this is an embedded field. skip if not struct
+					if fi.Type.Kind() != reflect.Struct {
+						continue
+					}
+
+					// queue for later analysis
+					queue = append(queue, Queued{fi.Type, index})
+					continue
+				}
+
+				if len(candidates[name]) == 0 {
+					order = append(order, name)
+				}
+
+				candidates[name] = append(candidates[name], Candidate{
+					Name:     name,
+					Explicit: explicit,
+					Field: field{
+						Name:  name,
+						Index: index,
+						Type:  fi.Type,
+					},
+				})
+			}
+		}
+
+		for _, name := range order {
+			candidates := candidates[name]
+
+			var visible []Candidate
+			for _, cand := range candidates {
+				if len(visible) == 0 {
+					visible = append(visible, cand)
+					continue
+				}
+
+				// invariant: all items in visible have the same nesting level
+				switch {
+				case len(cand.Field.Index) < len(visible[0].Field.Index):
+					// less nested, we win
+					visible = append(visible[:0], cand)
+
+				case len(cand.Field.Index) == len(visible[0].Field.Index):
+					// same level, add
+					visible = append(visible, cand)
+
+				default:
+					// we are more nested
+				}
+			}
+
+			// if we have exactly one visible item, that one wins
+			if len(visible) == 1 {
+				if !yield(visible[0].Field) {
+					break
+				}
+
 				continue
 			}
 
-			if fi.Anonymous {
-				// TODO support this
-				panic(fmt.Sprintf("anonymous field %q currently not supported", fi.Name))
+			// count the number of explicit candidates
+			var explicitCount int
+			for _, vis := range visible {
+				if vis.Explicit {
+					explicitCount += 1
+				}
 			}
 
-			if !yield(fi) {
-				break
+			// if we have exactly one explicit item, that one wins
+			if explicitCount == 1 {
+				for _, vis := range visible {
+					if vis.Explicit {
+						if !yield(vis.Field) {
+							break
+						}
+					}
+				}
+
+				continue
 			}
+
+			// no one wins
+			slog.Debug("No single choice", slog.Any("candidates", visible))
 		}
 	}
 }

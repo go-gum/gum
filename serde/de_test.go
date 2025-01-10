@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	. "github.com/go-gum/gum/internal/test"
 	"io"
@@ -56,6 +57,198 @@ func TestUnmarshalStruct(t *testing.T) {
 			City:    "Zürich",
 			ZipCode: 8015,
 		},
+	})
+}
+
+func TestNaming_JsonTagExplicit(t *testing.T) {
+	type Struct struct {
+		A string
+		B string `json:"A"`
+	}
+
+	sourceValue := dummySourceValue{
+		Values: map[string]any{
+			".A": "A",
+			".B": "B",
+		},
+	}
+
+	stud, err := UnmarshalNew[Struct](sourceValue)
+	AssertEqual(t, err, nil)
+	AssertEqual(t, stud, Struct{B: "A"})
+}
+
+func TestNaming_JsonTagSkip(t *testing.T) {
+	type Struct struct {
+		A string
+		B string `json:"-"`
+	}
+
+	sourceValue := dummySourceValue{
+		Values: map[string]any{
+			".A": "A",
+			".B": "B",
+		},
+	}
+
+	stud, err := UnmarshalNew[Struct](sourceValue)
+	AssertEqual(t, err, nil)
+	AssertEqual(t, stud, Struct{A: "A"})
+}
+
+func TestNaming_JsonTagNoName(t *testing.T) {
+	type Struct struct {
+		A string
+		B string `json:",omitempty"` // same as no json tag
+	}
+
+	sourceValue := dummySourceValue{
+		Values: map[string]any{
+			".A": "A",
+			".B": "B",
+		},
+	}
+
+	stud, err := UnmarshalNew[Struct](sourceValue)
+	AssertEqual(t, err, nil)
+	AssertEqual(t, stud, Struct{A: "A", B: "B"})
+}
+
+func TestNaming_EmbeddedNamingConflict(t *testing.T) {
+	type First struct{ A string }
+	type Second struct{ A string }
+
+	type Struct struct {
+		First
+		Second
+	}
+
+	sourceValue := dummySourceValue{
+		Values: map[string]any{
+			".A": "A",
+		},
+	}
+
+	stud, err := UnmarshalNew[Struct](sourceValue)
+	AssertEqual(t, err, nil)
+	AssertEqual(t, stud, Struct{
+		// naming conflict, nothing deserializes
+	})
+}
+
+func TestNaming_EmbeddedNamingExplicitWinsOnSameNesting(t *testing.T) {
+	type First struct {
+		A string
+	}
+	type Second struct {
+		A string `json:"A"` // this one wins
+	}
+
+	type Struct struct {
+		First
+		Second
+	}
+
+	sourceValue := dummySourceValue{
+		Values: map[string]any{
+			".A": "A",
+		},
+	}
+
+	stud, err := UnmarshalNew[Struct](sourceValue)
+	AssertEqual(t, err, nil)
+	AssertEqual(t, stud, Struct{Second: Second{A: "A"}})
+}
+
+func TestNaming_EmbeddedLowerNestingWins(t *testing.T) {
+	type First struct{ A string }
+
+	type Struct struct {
+		First
+		A string // this one wins
+	}
+
+	sourceValue := dummySourceValue{
+		Values: map[string]any{
+			".A": "A",
+		},
+	}
+
+	stud, err := UnmarshalNew[Struct](sourceValue)
+	AssertEqual(t, err, nil)
+	AssertEqual(t, stud, Struct{A: "A"})
+}
+
+func TestNaming_NoEmbeddingWithExplicitTag(t *testing.T) {
+	type First struct{ A string }
+
+	type Struct struct {
+		First `json:"First"`
+		A     string
+	}
+
+	sourceValue := dummySourceValue{
+		Values: map[string]any{
+			".A":       "A",
+			".First.A": "FirstA",
+		},
+	}
+
+	stud, err := UnmarshalNew[Struct](sourceValue)
+	AssertEqual(t, err, nil)
+	AssertEqual(t, stud, Struct{A: "A", First: First{A: "FirstA"}})
+}
+
+func TestNaming_EmbeddingWithExplicitNameWins(t *testing.T) {
+	type First struct{ A string }
+
+	type Struct struct {
+		First `json:"A"` // wins over A string
+		A     string
+	}
+
+	sourceValue := dummySourceValue{
+		Values: map[string]any{
+			".A.A": "FirstA",
+		},
+	}
+
+	stud, err := UnmarshalNew[Struct](sourceValue)
+	AssertEqual(t, err, nil)
+	AssertEqual(t, stud, Struct{First: First{A: "FirstA"}})
+}
+
+func TestNaming_MultipleEmbeddedTypes(t *testing.T) {
+	type First struct {
+		A string
+		B string
+		D string `json:"D"`
+	}
+
+	type Second struct {
+		A string // neither First.A, nor Second.A are filled
+		B string `json:"C"` // First.B and Second.B are both filled
+		D string // Only first.D is filled
+	}
+
+	type Struct struct {
+		First
+		Second
+	}
+
+	sourceValue := dummySourceValue{
+		Values: map[string]any{
+			".B": "FirstB",
+			".C": "SecondB",
+			".D": "FirstD",
+		},
+	}
+
+	stud, err := UnmarshalNew[Struct](sourceValue)
+	AssertEqual(t, err, nil)
+	AssertEqual(t, stud, Struct{
+		First:  First{B: "FirstB", D: "FirstD"},
+		Second: Second{B: "SecondB"},
 	})
 }
 
@@ -421,4 +614,100 @@ func TestDecodeBitmapHeader(t *testing.T) {
 	}
 
 	AssertEqual(t, parsed, expected)
+}
+
+type rawJsonSource struct {
+	value any
+}
+
+func (r rawJsonSource) Bool() (bool, error) {
+	switch value := r.value.(type) {
+	case bool:
+		return value, nil
+
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return value != 0, nil
+
+	case float32, float64:
+		return value != 0, nil
+
+	case string:
+		return value != "false" && value != "" && value != "0", nil
+
+	default:
+		return r.value != nil, nil
+	}
+}
+
+func (r rawJsonSource) Int() (int64, error) {
+	switch value := r.value.(type) {
+	case int:
+		return int64(value), nil
+	case int8:
+		return int64(value), nil
+	case int16:
+		return int64(value), nil
+	case int32:
+		return int64(value), nil
+	case int64:
+		return value, nil
+	case uint:
+		return int64(value), nil
+	case uint8:
+		return int64(value), nil
+	case uint16:
+		return int64(value), nil
+	case uint32:
+		return int64(value), nil
+	case uint64:
+		return int64(value), nil
+
+	case float32:
+		return int64(value), nil
+
+	case float64:
+		return int64(value), nil
+
+	case string:
+		return StringValue(value).Int()
+
+	case json.Number:
+		return value.Int64()
+
+	default:
+		return 0, ErrInvalidType
+	}
+}
+
+func (r rawJsonSource) Float() (float64, error) {
+	switch value := r.value.(type) {
+	case float32:
+		return float64(value), nil
+
+	case float64:
+		return value, nil
+
+	case string:
+		return StringValue(value).Float()
+
+	case json.Number:
+		return value.Float64()
+
+	default:
+		intValue, err := r.Int()
+		return float64(intValue), err
+	}
+}
+
+func (r rawJsonSource) String() (string, error) {
+	switch value := r.value.(type) {
+	case json.Number:
+		return value.String(), nil
+
+	case map[string]any, []any:
+		return "", ErrInvalidType
+
+	default:
+		return fmt.Sprintf("%v", r.value), nil
+	}
 }
