@@ -5,10 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"log/slog"
 	"reflect"
-	"slices"
-	"strconv"
 	"strings"
 	"sync"
 )
@@ -360,7 +357,7 @@ func setTextUnmarshaler(source SourceValue, target reflect.Value) error {
 func makeSetStruct(inConstruction inConstructionTypes, ty reflect.Type) (setter, error) {
 	var setters []setter
 
-	fields := slices.Collect(fieldsToSerialize(ty))
+	fields := fieldsToSerialize(ty)
 
 	for _, field := range fields {
 		de, err := setterOf(inConstruction, field.Type)
@@ -525,12 +522,6 @@ func makeSetArray(inConstruction inConstructionTypes, ty reflect.Type) (setter, 
 	return setter, nil
 }
 
-type field struct {
-	Name  string
-	Type  reflect.Type
-	Index []int
-}
-
 func nameOf(fi reflect.StructField) (name string, explicit bool) {
 	// parse json struct tag to get renamed alias
 	tag := fi.Tag.Get("json")
@@ -561,7 +552,13 @@ func nameOf(fi reflect.StructField) (name string, explicit bool) {
 	}
 }
 
-func fieldsToSerialize(ty reflect.Type) iter.Seq[field] {
+type field struct {
+	Name  string
+	Type  reflect.Type
+	Index []int
+}
+
+func fieldsToSerialize(ty reflect.Type) []field {
 	if ty.Kind() != reflect.Struct {
 		panic("not a struct")
 	}
@@ -577,230 +574,116 @@ func fieldsToSerialize(ty reflect.Type) iter.Seq[field] {
 		Field    field
 	}
 
-	return func(yield func(field) bool) {
-		// initialize queue to walk
-		queue := []Queued{{Type: ty}}
+	// initialize queue to walk
+	queue := []Queued{{Type: ty}}
 
-		candidates := map[string][]Candidate{}
+	candidates := map[string][]Candidate{}
 
-		var order []string
+	var order []string
 
-		for len(queue) > 0 {
-			item := queue[0]
-			queue = queue[1:]
+	for len(queue) > 0 {
+		item := queue[0]
+		queue = queue[1:]
 
-			for idx := range item.Type.NumField() {
-				fi := item.Type.Field(idx)
-				if !fi.IsExported() {
-					continue
-				}
-
-				name, explicit := nameOf(fi)
-				if name == "" {
-					// this one is skipped
-					continue
-				}
-
-				// derive index of this one. ensure we allocate a new slice by setting cap to
-				// the length of the parents index
-				parent := item.ParentIndex
-				index := append(parent[:len(parent):len(parent)], fi.Index...)
-
-				if fi.Anonymous && !explicit {
-					// this is an embedded field. skip if not struct
-					if fi.Type.Kind() != reflect.Struct {
-						continue
-					}
-
-					// queue for later analysis
-					queue = append(queue, Queued{fi.Type, index})
-					continue
-				}
-
-				if len(candidates[name]) == 0 {
-					order = append(order, name)
-				}
-
-				candidates[name] = append(candidates[name], Candidate{
-					Name:     name,
-					Explicit: explicit,
-					Field: field{
-						Name:  name,
-						Index: index,
-						Type:  fi.Type,
-					},
-				})
-			}
-		}
-
-		for _, name := range order {
-			candidates := candidates[name]
-
-			var visible []Candidate
-			for _, cand := range candidates {
-				if len(visible) == 0 {
-					visible = append(visible, cand)
-					continue
-				}
-
-				// invariant: all items in visible have the same nesting level
-				switch {
-				case len(cand.Field.Index) < len(visible[0].Field.Index):
-					// less nested, we win
-					visible = append(visible[:0], cand)
-
-				case len(cand.Field.Index) == len(visible[0].Field.Index):
-					// same level, add
-					visible = append(visible, cand)
-
-				default:
-					// we are more nested
-				}
-			}
-
-			// if we have exactly one visible item, that one wins
-			if len(visible) == 1 {
-				if !yield(visible[0].Field) {
-					break
-				}
-
+		for idx := range item.Type.NumField() {
+			fi := item.Type.Field(idx)
+			if !fi.IsExported() {
 				continue
 			}
 
-			// count the number of explicit candidates
-			var explicitCount int
+			name, explicit := nameOf(fi)
+			if name == "" {
+				// this one is skipped
+				continue
+			}
+
+			// derive index of this one. ensure we allocate a new slice by setting cap to
+			// the length of the parents index
+			parent := item.ParentIndex
+			index := append(parent[:len(parent):len(parent)], fi.Index...)
+
+			if fi.Anonymous && !explicit {
+				// this is an embedded field. skip if not struct
+				if fi.Type.Kind() != reflect.Struct {
+					continue
+				}
+
+				// queue for later analysis
+				queue = append(queue, Queued{fi.Type, index})
+				continue
+			}
+
+			if len(candidates[name]) == 0 {
+				order = append(order, name)
+			}
+
+			candidates[name] = append(candidates[name], Candidate{
+				Name:     name,
+				Explicit: explicit,
+				Field: field{
+					Name:  name,
+					Index: index,
+					Type:  fi.Type,
+				},
+			})
+		}
+	}
+
+	var fields []field
+
+	for _, name := range order {
+		candidates := candidates[name]
+
+		var visible []Candidate
+		for _, cand := range candidates {
+			if len(visible) == 0 {
+				visible = append(visible, cand)
+				continue
+			}
+
+			// invariant: all items in visible have the same nesting level
+			switch {
+			case len(cand.Field.Index) < len(visible[0].Field.Index):
+				// TODO We're doing a bfs walk over the struct,
+				//  so i think this can actually never happen. If that is true, we
+				//  can simplify the loop
+				// less nested, we win
+				visible = append(visible[:0], cand)
+
+			case len(cand.Field.Index) == len(visible[0].Field.Index):
+				// same level, add
+				visible = append(visible, cand)
+
+			default:
+				// we are more nested
+			}
+		}
+
+		// if we have exactly one visible item, that one wins
+		if len(visible) == 1 {
+			fields = append(fields, visible[0].Field)
+			continue
+		}
+
+		// count the number of explicit candidates
+		var explicitCount int
+		for _, vis := range visible {
+			if vis.Explicit {
+				explicitCount += 1
+			}
+		}
+
+		// if we have exactly one explicit item, that one wins
+		if explicitCount == 1 {
 			for _, vis := range visible {
 				if vis.Explicit {
-					explicitCount += 1
+					fields = append(fields, vis.Field)
 				}
 			}
 
-			// if we have exactly one explicit item, that one wins
-			if explicitCount == 1 {
-				for _, vis := range visible {
-					if vis.Explicit {
-						if !yield(vis.Field) {
-							break
-						}
-					}
-				}
-
-				continue
-			}
-
-			// no one wins
-			slog.Debug("No single choice", slog.Any("candidates", visible))
+			continue
 		}
 	}
+
+	return fields
 }
-
-func handleNumberErr[T any](inputValue string, value T, err error) (T, error) {
-	var zeroValue T
-	if errors.Is(err, strconv.ErrSyntax) {
-		err := fmt.Errorf("parse number %q: %w", inputValue, err)
-		return zeroValue, errors.Join(err, ErrInvalidType)
-	}
-
-	if err != nil {
-		return zeroValue, err
-	}
-
-	return value, nil
-}
-
-type StringValue string
-
-func (s StringValue) Int8() (int8, error) {
-	intValue, err := strconv.ParseInt(string(s), 10, 8)
-	return handleNumberErr(string(s), int8(intValue), err)
-}
-
-func (s StringValue) Int16() (int16, error) {
-	intValue, err := strconv.ParseInt(string(s), 10, 16)
-	return handleNumberErr(string(s), int16(intValue), err)
-}
-
-func (s StringValue) Int32() (int32, error) {
-	intValue, err := strconv.ParseInt(string(s), 10, 32)
-	return handleNumberErr(string(s), int32(intValue), err)
-}
-
-func (s StringValue) Int64() (int64, error) {
-	intValue, err := strconv.ParseInt(string(s), 10, 64)
-	return handleNumberErr(string(s), intValue, err)
-}
-
-func (s StringValue) Uint8() (uint8, error) {
-	intValue, err := strconv.ParseUint(string(s), 10, 8)
-	return handleNumberErr(string(s), uint8(intValue), err)
-}
-
-func (s StringValue) Uint16() (uint16, error) {
-	intValue, err := strconv.ParseUint(string(s), 10, 16)
-	return handleNumberErr(string(s), uint16(intValue), err)
-}
-
-func (s StringValue) Uint32() (uint32, error) {
-	intValue, err := strconv.ParseUint(string(s), 10, 32)
-	return handleNumberErr(string(s), uint32(intValue), err)
-}
-
-func (s StringValue) Uint64() (uint64, error) {
-	intValue, err := strconv.ParseUint(string(s), 10, 64)
-	return handleNumberErr(string(s), intValue, err)
-}
-
-func (s StringValue) Bool() (bool, error) {
-	switch {
-	case strings.EqualFold(string(s), "true"):
-		return true, nil
-	case strings.EqualFold(string(s), "false"):
-		return false, nil
-	}
-
-	return false, ErrInvalidType
-}
-
-func (s StringValue) Int() (int64, error) {
-	parsedValue, err := strconv.ParseInt(string(s), 10, 64)
-	if err != nil {
-		return 0, errors.Join(ErrInvalidType, err)
-	}
-
-	return parsedValue, nil
-}
-
-func (s StringValue) Float() (float64, error) {
-	parsedValue, err := strconv.ParseFloat(string(s), 64)
-	if err != nil {
-		return 0, errors.Join(ErrInvalidType, err)
-	}
-
-	return parsedValue, nil
-}
-
-func (s StringValue) String() (string, error) {
-	return string(s), nil
-}
-
-type InvalidValue struct{}
-
-func (i InvalidValue) Bool() (bool, error) {
-	return false, ErrInvalidType
-}
-
-func (i InvalidValue) Int() (int64, error) {
-	return 0, ErrInvalidType
-}
-
-func (i InvalidValue) Float() (float64, error) {
-	return 0, ErrInvalidType
-}
-
-func (i InvalidValue) String() (string, error) {
-	return "", ErrInvalidType
-}
-
-var _ SourceValue = InvalidValue{}
-
-var _ IntSourceValue = StringValue("")

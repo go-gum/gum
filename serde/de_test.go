@@ -19,7 +19,7 @@ import (
 func TestUnmarshalStruct(t *testing.T) {
 	type Address struct {
 		City    string
-		ZipCode int32 `json:"zip"`
+		ZipCode int32 `json:"zip,omitempty"`
 	}
 
 	type Student struct {
@@ -28,6 +28,7 @@ func TestUnmarshalStruct(t *testing.T) {
 		SkipThis   string `json:"-"`
 		Tags       Tags
 		Address    *Address
+		Height     float32
 	}
 
 	sourceValue := dummySourceValue{
@@ -36,6 +37,8 @@ func TestUnmarshalStruct(t *testing.T) {
 		Values: map[string]any{
 			"$.Name": "Albert",
 			"$.age":  int64(21),
+
+			"$.Height": 1.76,
 
 			"$.Tags":         "foo,bar",
 			"$.Address.City": "Zürich",
@@ -53,9 +56,37 @@ func TestUnmarshalStruct(t *testing.T) {
 		Name:       "Albert",
 		AgeInYears: 21,
 		Tags:       Tags{"foo", "bar"},
+		Height:     1.76,
 		Address: &Address{
 			City:    "Zürich",
 			ZipCode: 8015,
+		},
+	})
+}
+
+func TestUnmarshalStructWithMap(t *testing.T) {
+	type Struct struct {
+		Type   string
+		Values map[string]string
+	}
+
+	sourceValue := dummySourceValue{
+		Path: "$",
+
+		Values: map[string]any{
+			"$.Type":       "Foo",
+			"$.Values.One": "Eins",
+			"$.Values.Two": "Zwei",
+		},
+	}
+
+	stud, err := UnmarshalNew[Struct](sourceValue)
+	AssertEqual(t, err, nil)
+	AssertEqual(t, stud, Struct{
+		Type: "Foo",
+		Values: map[string]string{
+			"One": "Eins",
+			"Two": "Zwei",
 		},
 	})
 }
@@ -218,6 +249,20 @@ func TestNaming_EmbeddingWithExplicitNameWins(t *testing.T) {
 	AssertEqual(t, stud, Struct{First: First{A: "FirstA"}})
 }
 
+func TestNaming_NoEmbeddingWithPointer(t *testing.T) {
+	type First struct{ A string }
+
+	type Struct struct {
+		*First
+	}
+
+	sourceValue := dummySourceValue{}
+
+	stud, err := UnmarshalNew[Struct](sourceValue)
+	AssertEqual(t, err, nil)
+	AssertEqual(t, stud, Struct{})
+}
+
 func TestNaming_MultipleEmbeddedTypes(t *testing.T) {
 	type First struct {
 		A string
@@ -273,7 +318,7 @@ func TestSetter(t *testing.T) {
 	var nameValue = reflect.ValueOf(&name).Elem()
 	_ = nameSetter(nameSource, nameValue)
 
-	fmt.Println(name)
+	AssertEqual(t, name, "foobar")
 }
 
 func TestUnmarshalIP(t *testing.T) {
@@ -382,9 +427,32 @@ type dummySourceValue struct {
 	Path   string
 }
 
+func (d dummySourceValue) KeyValues() (iter.Seq2[SourceValue, SourceValue], error) {
+	return func(yield func(SourceValue, SourceValue) bool) {
+		for key, value := range d.Values {
+			if !strings.HasPrefix(key, d.Path+".") {
+				continue
+			}
+
+			key = strings.TrimPrefix(key, d.Path+".")
+
+			if !yield(StringValue(key), StringValue(value.(string))) {
+				return
+			}
+		}
+	}, nil
+}
+
 func (d dummySourceValue) Float() (float64, error) {
-	//TODO implement me
-	panic("implement me")
+	if value, ok := d.Values[d.Path]; ok {
+		if floatValue, ok := value.(float64); ok {
+			return floatValue, nil
+		}
+
+		return 0, ErrInvalidType
+	}
+
+	return 3.14159, nil
 }
 
 func (d dummySourceValue) Bool() (bool, error) {
@@ -410,8 +478,6 @@ func (d dummySourceValue) Iter() (iter.Seq[SourceValue], error) {
 }
 
 func (d dummySourceValue) Int() (int64, error) {
-	fmt.Println("read int64:", d.Path)
-
 	if value, ok := d.Values[d.Path]; ok {
 		if intValue, ok := value.(int64); ok {
 			return intValue, nil
@@ -424,8 +490,6 @@ func (d dummySourceValue) Int() (int64, error) {
 }
 
 func (d dummySourceValue) String() (string, error) {
-	fmt.Println("read string:", d.Path)
-
 	if value, ok := d.Values[d.Path]; ok {
 		if strValue, ok := value.(string); ok {
 			return strValue, nil
@@ -438,8 +502,6 @@ func (d dummySourceValue) String() (string, error) {
 }
 
 func (d dummySourceValue) Get(key string) (SourceValue, error) {
-	fmt.Println("get child:", d.Path, key)
-
 	path := d.Path + "." + key
 	if value, ok := d.Values[path]; ok && value == nil {
 		return nil, ErrNoValue
@@ -571,6 +633,42 @@ func (b binarySourceValue) Uint64() (uint64, error) {
 	}
 
 	return binary.LittleEndian.Uint64(buf[:]), nil
+}
+
+func TestBinarySourceValue(t *testing.T) {
+	var values []byte
+	for idx := range 256 {
+		values = append(values, byte(idx))
+	}
+
+	type Struct struct {
+		Int8  int8
+		Int16 int16
+		Int32 int32
+		Int64 int64
+
+		Uint8  uint8
+		Uint16 uint16
+		Uint32 uint32
+		Uint64 uint64
+	}
+
+	expected := Struct{
+		Int8:  0,
+		Int16: 0x0201,
+		Int32: 0x06050403,
+		Int64: 0x0e0d0c0b0a090807,
+
+		Uint8:  0x0f,
+		Uint16: 0x1110,
+		Uint32: 0x15141312,
+		Uint64: 0x1d1c1b1a19181716,
+	}
+
+	sourceValue := binarySourceValue{r: bytes.NewReader(values)}
+	parsed, err := UnmarshalNew[Struct](sourceValue)
+	AssertEqual(t, err, nil)
+	AssertEqual(t, parsed, expected)
 }
 
 func TestDecodeBitmapHeader(t *testing.T) {
